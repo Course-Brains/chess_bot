@@ -176,10 +176,10 @@ impl Trainer {
                 *score = 0.0;
                 *previous_score = 0.0;
             }
-            if *score > 0.1 || *previous_score > 0.1 {
-                println!("Better score than 0.1:\nwhite: {}\nblack: {}", score, previous_score);
-                panic!("YAY");
-            }
+            // if *score > 0.1 || *previous_score > 0.1 {
+            //     println!("Better score than 0.1:\nwhite: {}\nblack: {}", score, previous_score);
+            //     panic!("YAY");
+            // }
             if *score > unsafe { HIGHEST_WHITE_SCORE } {
                 unsafe { HIGHEST_WHITE_SCORE = *score };
             }
