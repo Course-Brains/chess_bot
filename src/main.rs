@@ -1,44 +1,232 @@
-use abes_nice_things::{ai::*, prelude::*, OnceLockMethod};
+use abes_nice_things::{ai::*, prelude::*, OnceLockMethod, input_allow_msg};
 
 use std::time::Duration;
 use std::ops::{Not, RangeInclusive};
 use std::thread::JoinHandle;
+use std::sync::Mutex;
 
 const MAX_CHANGE: RangeInclusive<f32> = -0.1..=0.1;
 
 static END: OnceLockMethod<JoinHandle<()>> = OnceLockMethod::new(&|| -> JoinHandle<()> {
     return std::thread::spawn(|| {
+        if "n" == &input_allow_msg(
+            &["y".to_string(),"n".to_string()],
+            "Would you like to play chess(y/n)")
+        {
+            println!("Training...");
+            input();
+            return
+        }
+        loop {
+            play_against();
+            if "n" == &input_allow_msg(
+                &["y".to_string(),"n".to_string()],
+                "Would you like to play chess(y/n)")
+            {
+                break
+            }
+        }
+        println!("Press enter to stop training");
         input();
     })
 });
+static mut WHITE_WINS: usize = 0;
+static mut BLACK_WINS: usize = 0;
+static BEST: Mutex<Option<Net>> = Mutex::new(None);
 
 fn main() {
+    *BEST.lock().unwrap() = Some(Default::default());
     // Getting run settings
-    println!("Nodes:");
-    let nodes: usize = input().parse().unwrap();
-    println!("Layers:");
-    let layers: usize = input().parse().unwrap();
     println!("Delay(ms):");
     let delay: u64 = input().parse().unwrap();
     let delay: Duration = Duration::from_millis(delay);
     END.init();
     Trainer::new()
-    .nodes(nodes)
-    .layers(layers)
-    .nets(2)
+    .nodes(25)
+    .layers(25)
     .delay(delay)
     .inputs(64)
     .outputs(4096)
     .max_change_inclusive(MAX_CHANGE)
+    .source("net")
     .cond_method(&|_| -> bool {
         END.get().as_ref().unwrap().is_finished()
     })
     .sequential()
-    .train(|nets| {
-        let mut game: Game = Game::new();
+    .train(|nets, best| {
+        nets[0].score = 0.0;
+        best.score = 0.0;
+        train(&mut [&mut nets[0], best]);
+        train(&mut [best, &mut nets[0]]);
+        if best.score != 0.0 && nets[0].score != 0.0 {
+            //println!("Best score: {}", best.score);
+            //println!("challenger: {}", nets[0].score);
+            if nets[0].score > best.score {
+                *BEST.lock().unwrap() = Some(best.to_owned())
+            }
+        }
+    });
+    println!("White wins: {}", unsafe { WHITE_WINS });
+    println!("Black wins: {}", unsafe { BLACK_WINS });
+    println!("White winrate: {}", unsafe { WHITE_WINS as f32 / (BLACK_WINS + WHITE_WINS) as f32 });
+    println!("Black winrate: {}", unsafe { BLACK_WINS as f32 / (BLACK_WINS + WHITE_WINS) as f32 });
+}
+fn play_against() {
+    let input = input_allow_msg(
+        &["white".to_string(), "black".to_string(), "quit".to_string()],
+        "Would what team would you like to play?")
+    ;
+    let team: Team;
+    if input == "quit".to_string() {
+        return
+    }
+    if input == "white".to_string() {
+        team = Team::White
+    }
+    else if input == "black".to_string() {
+        team = Team::Black
+    }
+    else {
+        panic!("I don't have any idea how this happened, I just put this here to appease the compiler")
+    }
+    let mut net = BEST.lock().unwrap().to_owned().unwrap();
+    let mut game: Game = Game::new();
+    let mut start: Pos;
+    let mut end: Pos;
+    
+    if let Team::White = team {
+        loop {
+            game.draw();
+            net = BEST.lock().unwrap().to_owned().unwrap();
+            if let Option::None = play_input(&mut game, &team) {
+                return
+            }
+            if let Some(team) = game.end_check() {
+                match team {
+                    Team::White => {
+                        println!("You win");
+                        return
+                    }
+                    Team::Black => {
+                        panic!("Black won on white's turn");
+                    }
+                }
+            }
+            net.inputs = game.get_values(!team);
+            (start, end) = output_to_move(&game, !team, &net.get_outputs());
+            assert!(game.play(&start, &end));
+            if let Some(team) = game.end_check() {
+                match team {
+                    Team::White => {
+                        panic!("White won on black's turn")
+                    }
+                    Team::Black => {
+                        println!("You lose");
+                        return
+                    }
+                }
+            }
+        }
+    }
+    else {
+        loop {
+            net = BEST.lock().unwrap().to_owned().unwrap();
+            net.inputs = game.get_values(!team);
+            (start, end) = output_to_move(&game, !team, &net.get_outputs());
+            assert!(game.play(&start, &end));
+            if let Some(team) = game.end_check() {
+                match team {
+                    Team::White => {
+                        println!("You lose");
+                        return
+                    }
+                    Team::Black => {
+                        panic!("White won on black's turn")
+                    }
+                }
+            }
+            game.draw();
+            if let Option::None = play_input(&mut game, &team) {
+                return
+            }
+            if let Some(team) = game.end_check() {
+                match team {
+                    Team::White => {
+                        panic!("Black won on white's turn");
+                    }
+                    Team::Black => {
+                        println!("You win");
+                        return
+                    }
+                }
+            }
+        }
+    }
+}
+fn play_input(game: &mut Game, team: &Team) -> Option<()> {
+    let allow = [
+        "0".to_string(),
+        "1".to_string(),
+        "2".to_string(),
+        "3".to_string(),
+        "4".to_string(),
+        "5".to_string(),
+        "6".to_string(),
+        "7".to_string(),
+        "quit".to_string()
+    ];
+    loop {
+        let input = input_allow_msg(&allow, "Start X pos");
+        if input == "quit".to_string() {
+            return None
+        }
+        let start_x: usize = input.parse().unwrap();
+
+        let input = input_allow_msg(&allow, "Start Y pos");
+        if input == "quit".to_string() {
+            return None
+        }
+        let start_y: usize = input.parse().unwrap();
+
+        let input = input_allow_msg(&allow, "End X pos");
+        if input == "quit".to_string() {
+            return None
+        }
+        let end_x: usize = input.parse().unwrap();
+
+        let input = input_allow_msg(&allow, "End Y pos");
+        if input == "quit".to_string() {
+            return None
+        }
+        let end_y: usize = input.parse().unwrap();
+        let start = Pos::new(start_x, start_y);
+        let end = Pos::new(end_x, end_y);
+        match game.get_pos(&start).unwrap() {
+            Some(piece) => {
+                if !(piece.team() == *team) {
+                    continue
+                }
+            }
+            None => {
+                continue
+            }
+        }
+        if let Some(piece) = game.get_pos(&end).unwrap() {
+            if piece.team() == *team {
+                continue
+            }
+        }
+        if game.valid(&start, &end) {
+            game.play(&start, &end);
+            return Some(())
+        }
+    }
+}
+fn train(nets: &mut [&mut Net]) {
+    let mut game: Game = Game::new();
         let mut start: Pos;
         let mut end: Pos;
-        for move_count in 0..60 {
+        for move_count in 0..90 {
             nets[0].inputs = game.get_values(Team::White);
             let outputs = nets[0].get_outputs();
             (start, end) = output_to_move(&game, Team::White, &outputs);
@@ -46,8 +234,9 @@ fn main() {
             if let Some(team) = game.end_check() {
                 match team {
                     Team::White => {
-                        nets[0].score = 15.0 - (move_count as f32)/10.0;
-                        nets[1].score = (move_count as f32)/10.0;
+                        nets[0].score += 10.0 - (move_count as f32)/10.0;
+                        nets[1].score += 0.0;
+                        unsafe { WHITE_WINS += 1}
                         break
                     }
                     Team::Black => {
@@ -56,7 +245,7 @@ fn main() {
                 }
             }
             nets[1].inputs = game.get_values(Team::Black);
-            (start, end) = output_to_move(&game, Team::White, &nets[1].get_outputs());
+            (start, end) = output_to_move(&game, Team::Black, &nets[1].get_outputs());
             assert!(game.play(&start, &end));
             if let Some(team) = game.end_check() {
                 match team {
@@ -64,24 +253,14 @@ fn main() {
                         panic!("White won on black's turn");
                     }
                     Team::Black => {
-                        nets[0].score = (move_count as f32)/10.0;
-                        nets[1].score = 15.0 - (move_count as f32)/10.0;
+                        nets[0].score += 0.0;
+                        nets[1].score += 10.0 - (move_count as f32)/10.0;
+                        unsafe { BLACK_WINS += 1}
                         break
                     }
                 }
             }
         }
-        debug!({
-            if nets[0].score != 0.0 {
-                assert_eq!(nets[0].score + nets[1].score, 15.0, "Net scores did not add to 15\nWhite: {}\n Black {}", nets[0].score, nets[1].score);
-            }
-        });
-        println!(
-            "White: {}\nBlack: {}",
-            nets[0].score,
-            nets[1].score
-        );
-    });
 }
 
 fn get_character(value: &Option<Piece>) -> String {
@@ -837,6 +1016,8 @@ fn get_pos<'a>(board: &'a Board, pos: &Pos) -> Result<&'a Option<Piece>, &'a str
 
 fn output_to_move(game: &Game, team: Team, outputs: &[f32]) -> (Pos, Pos) {
     let mut outputs: Vec<(f32, usize)> = outputs.iter().enumerate().map(|(index, value)| -> (f32, usize) {
+        debug_assert!(value.is_finite());
+        debug_assert!(!value.is_nan());
         return (*value, index)
     }).collect();
     outputs.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
