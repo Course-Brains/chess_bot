@@ -1,8 +1,8 @@
-use abes_nice_things::{ai::*, prelude::*, OnceLockMethod, input_allow_msg};
+use abes_nice_things::{ai::*, prelude::*, OnceLockMethod, input_allow_msg, file_ops::{save_bin, load_bin}};
 
 use std::time::Duration;
 use std::ops::{Not, RangeInclusive};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 use std::sync::Mutex;
 
 const MAX_CHANGE: RangeInclusive<f32> = -0.1..=0.1;
@@ -35,12 +35,24 @@ static mut BLACK_WINS: usize = 0;
 static BEST: Mutex<Option<Net>> = Mutex::new(None);
 
 fn main() {
-    *BEST.lock().unwrap() = Some(Default::default());
+    if let Ok(_) = std::fs::metadata("net") {
+        *BEST.lock().unwrap() = Some(load_bin("net"));
+    }
+    else {
+        *BEST.lock().unwrap() = Some(Net::new(25, 25, 64, 4096))
+    }
     // Getting run settings
     println!("Delay(ms):");
     let delay: u64 = input().parse().unwrap();
     let delay: Duration = Duration::from_millis(delay);
     END.init();
+    thread::spawn(|| {
+        loop {
+            thread::sleep(Duration::from_secs(300));
+            let best = BEST.lock().unwrap().to_owned().unwrap();
+            save_bin("net", &best);
+        }
+    });
     Trainer::new()
     .nodes(25)
     .layers(25)
@@ -90,6 +102,7 @@ fn play_against() {
         panic!("I don't have any idea how this happened, I just put this here to appease the compiler")
     }
     let mut net = BEST.lock().unwrap().to_owned().unwrap();
+    debug_assert_ne!(net, Net::default());
     let mut game: Game = Game::new();
     let mut start: Pos;
     let mut end: Pos;
@@ -1015,6 +1028,7 @@ fn get_pos<'a>(board: &'a Board, pos: &Pos) -> Result<&'a Option<Piece>, &'a str
 }
 
 fn output_to_move(game: &Game, team: Team, outputs: &[f32]) -> (Pos, Pos) {
+    debug_assert_eq!(outputs.len(), 4096, "Output list was not 4096, was {}", outputs.len());
     let mut outputs: Vec<(f32, usize)> = outputs.iter().enumerate().map(|(index, value)| -> (f32, usize) {
         debug_assert!(value.is_finite());
         debug_assert!(!value.is_nan());
@@ -1044,6 +1058,7 @@ fn output_to_move(game: &Game, team: Team, outputs: &[f32]) -> (Pos, Pos) {
             return (start, end)
         }
     }
+    println!("{:?}", outputs);
     panic!("No move")
 }
 fn index_to_indexs(index: &usize) -> (usize, usize) {
