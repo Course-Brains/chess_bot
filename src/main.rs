@@ -6,6 +6,7 @@ use std::thread::{self, JoinHandle};
 use std::sync::Mutex;
 
 const MAX_CHANGE: RangeInclusive<f32> = -0.1..=0.1;
+const MAX_WEIGHT: RangeInclusive<f32> = -10.0..=10.0;
 
 static END: OnceLockMethod<JoinHandle<()>> = OnceLockMethod::new(&|| -> JoinHandle<()> {
     return std::thread::spawn(|| {
@@ -60,6 +61,7 @@ fn main() {
     .inputs(64)
     .outputs(4096)
     .max_change_inclusive(MAX_CHANGE)
+    .max_weight_inclusive(MAX_WEIGHT)
     .source("net")
     .cond_method(&|_| -> bool {
         END.get().as_ref().unwrap().is_finished()
@@ -99,7 +101,7 @@ fn play_against() {
         team = Team::Black
     }
     else {
-        panic!("I don't have any idea how this happened, I just put this here to appease the compiler")
+        unreachable!()
     }
     let mut net = BEST.lock().unwrap().to_owned().unwrap();
     debug_assert_ne!(net, Net::default());
