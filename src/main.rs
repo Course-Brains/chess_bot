@@ -43,9 +43,11 @@ fn main() {
         *BEST.lock().unwrap() = Some(Net::new(25, 25, 64, 4096))
     }
     // Getting run settings
+    println!("Threads:");
+    let threads = input().parse().unwrap();
     println!("Delay(ms):");
-    let delay: u64 = input().parse().unwrap();
-    let delay: Duration = Duration::from_millis(delay);
+    let delay = input().parse().unwrap();
+    let delay = Duration::from_millis(delay);
     END.init();
     thread::spawn(|| {
         loop {
@@ -66,7 +68,7 @@ fn main() {
     .cond_method(&|_| -> bool {
         END.get().as_ref().unwrap().is_finished()
     })
-    .sequential()
+    .thread(threads)
     .train(|nets, best| {
         nets[0].score = 0.0;
         best.score = 0.0;
@@ -88,7 +90,7 @@ fn main() {
 fn play_against() {
     let input = input_allow_msg(
         &["white".to_string(), "black".to_string(), "quit".to_string()],
-        "Would what team would you like to play?")
+        "Which team would you like to play as?(white/black)")
     ;
     let team: Team;
     if input == "quit".to_string() {
@@ -119,6 +121,7 @@ fn play_against() {
             if let Some(team) = game.end_check() {
                 match team {
                     Team::White => {
+                        game.draw();
                         println!("You win");
                         return
                     }
@@ -136,6 +139,7 @@ fn play_against() {
                         panic!("White won on black's turn")
                     }
                     Team::Black => {
+                        game.draw();
                         println!("You lose");
                         return
                     }
@@ -152,6 +156,7 @@ fn play_against() {
             if let Some(team) = game.end_check() {
                 match team {
                     Team::White => {
+                        game.draw();
                         println!("You lose");
                         return
                     }
@@ -170,6 +175,7 @@ fn play_against() {
                         panic!("Black won on white's turn");
                     }
                     Team::Black => {
+                        game.draw();
                         println!("You win");
                         return
                     }
@@ -714,16 +720,6 @@ impl Piece {
             Piece::Bishop(target) => return target.team,
             Piece::Queen(target) => return target.team,
             Piece::King(target) => return target.team,
-        }
-    }
-    fn pos(&self) -> Pos {
-        match self {
-            Piece::Pawn(target) => return target.pos,
-            Piece::Knight(target) => return target.pos,
-            Piece::Rook(target) => return target.pos,
-            Piece::Bishop(target) => return target.pos,
-            Piece::Queen(target) => return target.pos,
-            Piece::King(target) => return target.pos,
         }
     }
     fn set_pos(&mut self, new: &Pos) {
